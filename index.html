@@ -1379,29 +1379,34 @@ async function syncFromGoogleSheet(silent){
 
 function autoShowSampleDebug(){
   const d = window.__lastMapDebug;
-  const out = document.getElementById('sheet-debug-output');
-  if(!d || !out) return;
   const sample = (RAW_ROWS && RAW_ROWS.length) ? RAW_ROWS.find(r=>r.status==='Present') || RAW_ROWS[0] : null;
-  let text = 'SAMPLE ROW (first "Present" row found), raw values as received:\n';
+  let text = '';
   if(sample){
-    text += `  empId: ${JSON.stringify(sample.empId)}\n`;
-    text += `  role (designation): ${JSON.stringify(sample.role)}\n`;
-    text += `  status: ${JSON.stringify(sample.status)}\n`;
-    text += `  biometricTime (raw): ${JSON.stringify(sample.biometricTime)}\n`;
-    text += `  fixedCutOff (raw): ${JSON.stringify(sample.fixedCutOff)}\n`;
     const bm = toMin(sample.biometricTime);
     const cm = toMin(sample.fixedCutOff);
     const rc = roleCutoffMinutes(sample.role);
-    text += `  parsed biometricTime -> ${bm} minutes\n`;
-    text += `  parsed fixedCutOff -> ${cm} minutes\n`;
-    text += `  role-based fallback cutoff -> ${rc} minutes\n`;
-    text += `  --> cutoff actually used: ${cm!==null?cm:(rc!==null?rc:'null (needs manual)')} minutes\n`;
-    text += `  --> computed delay: ${bm!==null && (cm!==null||rc!==null) ? bm - (cm!==null?cm:rc) : 'N/A'} minutes\n`;
+    const usedCutoff = cm!==null?cm:(rc!==null?rc:null);
+    text += `Employee ID: ${sample.empId}\n`;
+    text += `Designation: ${sample.role}\n`;
+    text += `Status: ${sample.status}\n\n`;
+    text += `Biometric Time (raw text): "${sample.biometricTime}"\n`;
+    text += `Fixed Cut Off (raw text): "${sample.fixedCutOff}"\n\n`;
+    text += `Parsed Biometric -> ${bm} minutes\n`;
+    text += `Parsed Fixed Cut Off -> ${cm} minutes\n`;
+    text += `Role-based fallback cutoff -> ${rc} minutes\n`;
+    text += `Cutoff actually used -> ${usedCutoff!==null?usedCutoff:'null (needs manual entry)'} minutes\n\n`;
+    text += `Computed delay -> ${(bm!==null && usedCutoff!==null) ? (bm-usedCutoff)+' minutes' : 'N/A'}\n`;
+    text += `Result -> ${(bm!==null && usedCutoff!==null) ? ((bm-usedCutoff)<=0?'ON TIME':'LATE') : 'UNVERIFIED'}`;
   } else {
-    text += '  (no Present rows found in dataset)\n';
+    text = 'No "Present" rows found in the synced data.';
   }
-  out.textContent = text;
-  out.style.display = 'block';
+  const overlay = document.getElementById('modal-overlay');
+  document.getElementById('modal-body').innerHTML = `
+    <h3>Sync Diagnostic - Sample Row</h3>
+    <div class="modal-sub">This popup shows exactly what the dashboard read for one real employee</div>
+    <pre style="white-space:pre-wrap;font-family:var(--mono);font-size:12.5px;background:var(--bg-soft);border:1px solid var(--border);border-radius:8px;padding:14px;line-height:1.7">${text}</pre>
+  `;
+  overlay.style.display = 'flex';
 }
 
 function connectGoogleSheet(url){
