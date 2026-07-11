@@ -358,6 +358,8 @@ tbody tr:hover{background:var(--card-2)}
     <button class="btn primary" id="sheet-sync-connect">Connect &amp; Sync</button>
     <button class="reset-btn" id="sheet-sync-disconnect">Disconnect</button>
     <div style="width:100%;font-family:var(--mono);font-size:11.5px;color:var(--text-faint)" id="sheet-sync-status">Not connected</div>
+    <button class="btn" id="sheet-debug-btn" style="margin-top:6px">🔍 Show Column Mapping Debug</button>
+    <pre id="sheet-debug-output" style="display:none;width:100%;white-space:pre-wrap;font-family:var(--mono);font-size:11px;background:var(--bg-soft);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:6px;max-height:300px;overflow:auto"></pre>
   </div>
 
   <div class="filters">
@@ -1157,6 +1159,8 @@ function autoMapAndLoad(workbook, opts){
   }
   if(headerRowIdx===-1){ showToast('Could not detect header row automatically.'); return; }
 
+  window.__lastMapDebug = { headerRow, colMap: null, sampleRaw: raw[headerRowIdx+1]||[], sampleMapped: null };
+
   const colMap = {};
   headerRow.forEach((h,idx)=>{
     if(!h) return;
@@ -1211,6 +1215,8 @@ function autoMapAndLoad(workbook, opts){
       fixedCutOff: colMap.fixedCutOff!==undefined ? cellToTimeStr(row[colMap.fixedCutOff]) : null
     });
   }
+  window.__lastMapDebug.colMap = colMap;
+  window.__lastMapDebug.sampleMapped = newRows[0] || null;
   RAW_ROWS = opts.replace ? newRows : RAW_ROWS.concat(newRows);
   ALL_ROWS = buildWorkingRows();
   populateFilterOptions();
@@ -1344,6 +1350,7 @@ async function syncFromGoogleSheet(silent){
     const count = autoMapAndLoad(wb, {replace:true, silent:true});
     if(statusEl) statusEl.textContent = `✓ Synced ${count} rows · ${new Date().toLocaleTimeString()}`;
     if(!silent) showToast(`Synced ${count} rows from Google Sheet.`);
+    autoShowSampleDebug();
     return;
   } catch(jsonpErr){
     // Fall back to direct CSV fetch (works for non-Apps-Script CSV links)
@@ -1359,6 +1366,7 @@ async function syncFromGoogleSheet(silent){
         const count = autoMapAndLoad(wb, {replace:true, silent:true});
         if(statusEl) statusEl.textContent = `✓ Synced ${count} rows · ${new Date().toLocaleTimeString()}`;
         if(!silent) showToast(`Synced ${count} rows from Google Sheet.`);
+        autoShowSampleDebug();
         return;
       } catch(err){
         lastErr = err;
@@ -1367,6 +1375,33 @@ async function syncFromGoogleSheet(silent){
     if(statusEl) statusEl.textContent = `⚠ Sync failed (${lastErr ? lastErr.message : 'unknown error'}) — make sure the Apps Script is redeployed with the latest code`;
     if(!silent) showToast('Could not sync from Google Sheet. Make sure the Apps Script was redeployed (Deploy → Manage deployments → New version).');
   }
+}
+
+function autoShowSampleDebug(){
+  const d = window.__lastMapDebug;
+  const out = document.getElementById('sheet-debug-output');
+  if(!d || !out) return;
+  const sample = (RAW_ROWS && RAW_ROWS.length) ? RAW_ROWS.find(r=>r.status==='Present') || RAW_ROWS[0] : null;
+  let text = 'SAMPLE ROW (first "Present" row found), raw values as received:\n';
+  if(sample){
+    text += `  empId: ${JSON.stringify(sample.empId)}\n`;
+    text += `  role (designation): ${JSON.stringify(sample.role)}\n`;
+    text += `  status: ${JSON.stringify(sample.status)}\n`;
+    text += `  biometricTime (raw): ${JSON.stringify(sample.biometricTime)}\n`;
+    text += `  fixedCutOff (raw): ${JSON.stringify(sample.fixedCutOff)}\n`;
+    const bm = toMin(sample.biometricTime);
+    const cm = toMin(sample.fixedCutOff);
+    const rc = roleCutoffMinutes(sample.role);
+    text += `  parsed biometricTime -> ${bm} minutes\n`;
+    text += `  parsed fixedCutOff -> ${cm} minutes\n`;
+    text += `  role-based fallback cutoff -> ${rc} minutes\n`;
+    text += `  --> cutoff actually used: ${cm!==null?cm:(rc!==null?rc:'null (needs manual)')} minutes\n`;
+    text += `  --> computed delay: ${bm!==null && (cm!==null||rc!==null) ? bm - (cm!==null?cm:rc) : 'N/A'} minutes\n`;
+  } else {
+    text += '  (no Present rows found in dataset)\n';
+  }
+  out.textContent = text;
+  out.style.display = 'block';
 }
 
 function connectGoogleSheet(url){
@@ -1528,6 +1563,21 @@ function initFilterListeners(){
     connectGoogleSheet(document.getElementById('sheet-sync-url').value);
   });
   document.getElementById('sheet-sync-disconnect').addEventListener('click', disconnectGoogleSheet);
+  document.getElementById('sheet-debug-btn').addEventListener('click', ()=>{
+    const out = document.getElementById('sheet-debug-output');
+    const d = window.__lastMapDebug;
+    if(!d){ out.style.display='block'; out.textContent = 'No sync has completed yet - click Connect & Sync first.'; return; }
+    const colNameFor = (idx)=> d.headerRow[idx] !== undefined ? d.headerRow[idx] : '(none)';
+    let text = 'DETECTED HEADER ROW:\n' + JSON.stringify(d.headerRow) + '\n\n';
+    text += 'COLUMN MAPPING (field -> spreadsheet column header):\n';
+    Object.keys(d.colMap||{}).forEach(field=>{
+      text += `  ${field} -> "${colNameFor(d.colMap[field])}" (column index ${d.colMap[field]})\n`;
+    });
+    text += '\nRAW FIRST DATA ROW (as received):\n' + JSON.stringify(d.sampleRaw) + '\n\n';
+    text += 'FIRST ROW AFTER MAPPING (what the dashboard computed):\n' + JSON.stringify(d.sampleMapped, null, 2);
+    out.textContent = text;
+    out.style.display = out.style.display==='none' ? 'block' : 'none';
+  });
 
   document.querySelectorAll('.tab[data-lbtab]').forEach(t=>{
     t.addEventListener('click', ()=>{
