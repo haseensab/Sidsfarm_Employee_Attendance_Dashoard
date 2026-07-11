@@ -1295,28 +1295,77 @@ function buildCandidateCsvUrls(url){
   return urls;
 }
 
+function loadViaJsonp(url, timeoutMs){
+  return new Promise((resolve, reject)=>{
+    const callbackName = 'sheetSyncCb_' + Date.now() + '_' + Math.floor(Math.random()*100000);
+    const script = document.createElement('script');
+    let done = false;
+    const timer = setTimeout(()=>{
+      if(done) return;
+      done = true;
+      cleanup();
+      reject(new Error('Timed out waiting for response'));
+    }, timeoutMs || 12000);
+    function cleanup(){
+      clearTimeout(timer);
+      delete window[callbackName];
+      if(script.parentNode) script.parentNode.removeChild(script);
+    }
+    window[callbackName] = function(rows){
+      if(done) return;
+      done = true;
+      cleanup();
+      resolve(rows);
+    };
+    script.onerror = function(){
+      if(done) return;
+      done = true;
+      cleanup();
+      reject(new Error('Could not load script (network or URL error)'));
+    };
+    const sep = url.includes('?') ? '&' : '?';
+    script.src = url + sep + 'callback=' + callbackName + '&_ts=' + Date.now();
+    document.body.appendChild(script);
+  });
+}
+
 async function syncFromGoogleSheet(silent){
   if(!sheetSyncUrl) return;
   const statusEl = document.getElementById('sheet-sync-status');
-  const candidates = buildCandidateCsvUrls(sheetSyncUrl);
-  let lastErr = null;
-  for(const csvUrl of candidates){
-    try{
-      const res = await fetch(csvUrl, {cache:'no-store'});
-      if(!res.ok) throw new Error('HTTP '+res.status);
-      const csvText = await res.text();
-      if(!csvText || csvText.trim().startsWith('<')) throw new Error('Not CSV (got HTML - likely a sign-in page)');
-      const wb = XLSX.read(csvText, {type:'string'});
-      const count = autoMapAndLoad(wb, {replace:true, silent:true});
-      if(statusEl) statusEl.textContent = `✓ Synced ${count} rows · ${new Date().toLocaleTimeString()}`;
-      if(!silent) showToast(`Synced ${count} rows from Google Sheet.`);
-      return;
-    } catch(err){
-      lastErr = err;
+
+  // Primary method: JSONP via <script> tag - bypasses CORS entirely, works on every
+  // browser including Safari/mobile where fetch() to Google's redirecting endpoints
+  // can be blocked.
+  try{
+    const rows = await loadViaJsonp(sheetSyncUrl);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    const wb = { SheetNames:['Sheet1'], Sheets:{ Sheet1: ws } };
+    const count = autoMapAndLoad(wb, {replace:true, silent:true});
+    if(statusEl) statusEl.textContent = `✓ Synced ${count} rows · ${new Date().toLocaleTimeString()}`;
+    if(!silent) showToast(`Synced ${count} rows from Google Sheet.`);
+    return;
+  } catch(jsonpErr){
+    // Fall back to direct CSV fetch (works for non-Apps-Script CSV links)
+    const candidates = buildCandidateCsvUrls(sheetSyncUrl);
+    let lastErr = jsonpErr;
+    for(const csvUrl of candidates){
+      try{
+        const res = await fetch(csvUrl, {cache:'no-store'});
+        if(!res.ok) throw new Error('HTTP '+res.status);
+        const csvText = await res.text();
+        if(!csvText || csvText.trim().startsWith('<')) throw new Error('Not CSV (got HTML - likely a sign-in page)');
+        const wb = XLSX.read(csvText, {type:'string'});
+        const count = autoMapAndLoad(wb, {replace:true, silent:true});
+        if(statusEl) statusEl.textContent = `✓ Synced ${count} rows · ${new Date().toLocaleTimeString()}`;
+        if(!silent) showToast(`Synced ${count} rows from Google Sheet.`);
+        return;
+      } catch(err){
+        lastErr = err;
+      }
     }
+    if(statusEl) statusEl.textContent = `⚠ Sync failed (${lastErr ? lastErr.message : 'unknown error'}) — make sure the Apps Script is redeployed with the latest code`;
+    if(!silent) showToast('Could not sync from Google Sheet. Make sure the Apps Script was redeployed (Deploy → Manage deployments → New version).');
   }
-  if(statusEl) statusEl.textContent = `⚠ Sync failed (${lastErr ? lastErr.message : 'unknown error'}) — try "File → Share → Publish to web" and paste that link instead`;
-  if(!silent) showToast('Could not sync from Google Sheet. Try File → Share → Publish to web (CSV) and paste that link instead.');
 }
 
 function connectGoogleSheet(url){
