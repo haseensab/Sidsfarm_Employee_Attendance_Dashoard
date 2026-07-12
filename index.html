@@ -1155,7 +1155,7 @@ function applyTheme(){
 
 /* ============ Excel upload / auto column mapping (supports this HR-export format) ============ */
 function headerMatches(header, keywords){
-  const h = header.toLowerCase();
+  const h = header.toLowerCase().trim();
   return keywords.some(k=>h.includes(k));
 }
 function autoMapAndLoad(workbook, opts){
