@@ -492,7 +492,7 @@ tbody tr:hover{background:var(--card-2)}
   </div>
 
   <div class="footer-note">Click any employee row for an individual performance breakdown · Data source: uploaded SC team roster export</div>
-  <div class="footer-note" style="margin-top:4px">Build: v2026-07-11-JSONP-3</div>
+  <div class="footer-note" style="margin-top:4px">Build: v2026-07-11-fixtime-4</div>
 
   <div class="section">
     <div class="section-head"><h2>Point / Zone-wise Summary</h2></div>
@@ -582,12 +582,26 @@ let manualCutoffOverrides = {}; // key: hrid || empId+date -> "HH:MM" manual rep
 
 /* ============ Helpers ============ */
 function toMin(t){
-  if(!t) return null;
-  const parts = String(t).split(':');
-  if(parts.length<2) return null;
-  const h = parseInt(parts[0],10), m = parseInt(parts[1],10);
-  if(isNaN(h)||isNaN(m)) return null;
-  return h*60+m;
+  if(t===null||t===undefined||t==='') return null;
+  if(typeof t==='number'){
+    const frac = t - Math.floor(t);
+    return Math.round(frac*24*60);
+  }
+  const s = String(t).trim();
+  if(!s) return null;
+  // Find a HH:MM (optionally :SS, optionally AM/PM) pattern anywhere in the string -
+  // this correctly extracts the time even if a full datetime like
+  // "2026-06-30 05:24:55" comes through instead of a plain "05:24".
+  const m = s.match(/(\d{1,2}):(\d{2})(?::\d{2})?\s*(AM|PM|am|pm)?/);
+  if(!m) return null;
+  let h = parseInt(m[1],10), min = parseInt(m[2],10);
+  if(isNaN(h)||isNaN(min)) return null;
+  if(m[3]){
+    const ap = m[3].toUpperCase();
+    if(ap==='PM' && h<12) h+=12;
+    if(ap==='AM' && h===12) h=0;
+  }
+  return h*60+min;
 }
 function fmtMin(mins){
   if(mins===null||mins===undefined||isNaN(mins)) return null;
